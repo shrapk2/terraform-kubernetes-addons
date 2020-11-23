@@ -9,3 +9,9 @@ variable "kapsule" {
   type        = any
   default     = {}
 }
+
+variable "cert-manager-scaleway-webhook-dns" {
+  description = "Scaleway webhook DNS for cert-manager variables"
+  type        = any
+  default     = {}
+}

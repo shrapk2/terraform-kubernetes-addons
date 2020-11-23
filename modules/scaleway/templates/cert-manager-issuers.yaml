@@ -1,8 +1,9 @@
 ---
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
   name: letsencrypt-staging
+  namespace: '${namespace}'
 spec:
   acme:
     server: https://acme-staging-v02.api.letsencrypt.org/directory
@@ -23,8 +24,9 @@ spec:
               name: scaleway-secret
 ---
 apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
+kind: Issuer
 metadata:
+  namespace: '${namespace}'
   name: letsencrypt
 spec:
   acme:

@@ -1,4 +1,7 @@
 locals {
+  custom_image_repo = "amazon/aws-alb-ingress-controller"
+  custom_image_name = "aws-alb-ingress-controller"
+
   aws-load-balancer-controller = merge(
     local.helm_defaults,
     {
@@ -10,7 +13,7 @@ locals {
       create_iam_resources_irsa = true
       enabled                   = false
       chart_version             = "1.0.5"
-      version                   = "v2.0.0"
+      version                   = "v2.0.1"
       iam_policy_override       = null
       default_network_policy    = true
     },
@@ -19,32 +22,41 @@ locals {
 
   values_aws-load-balancer-controller = <<VALUES
 image:
+  name: "${local.custom_image_name}"
+  repository: "${local.custom_image_repo}"
   tag: "${local.aws-load-balancer-controller["version"]}"
 clusterName: ${var.cluster-name}
-rbac:
-  serviceAccount:
-    name: "${local.aws-load-balancer-controller["version"]}"
-    annotations:
-      eks.amazonaws.com/role-arn: "${local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["create_iam_resources_irsa"] ? module.iam_assumable_role_aws-load-balancer-controller.this_iam_role_arn : ""}"
 VALUES
 }
+# serviceAccount:
+#   name: "${lower(module.iam_assumable_role_aws-load-balancer-controller.this_iam_role_name)}"
+#   annotations:
+#     eks.amazonaws.com/role-arn: "${local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["create_iam_resources_irsa"] ? module.iam_assumable_role_aws-load-balancer-controller.this_iam_role_arn : ""}"
 
-module "iam_assumable_role_aws-load-balancer-controller" {
-  source                        = "terraform-aws-modules/iam/aws//modules/iam-assumable-role-with-oidc"
-  version                       = "~> 3.0"
-  create_role                   = local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["create_iam_resources_irsa"]
-  role_name                     = "tf-${var.cluster-name}-${local.aws-load-balancer-controller["name"]}-irsa"
-  provider_url                  = replace(var.eks["cluster_oidc_issuer_url"], "https://", "")
-  role_policy_arns              = local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["create_iam_resources_irsa"] ? [aws_iam_policy.aws-load-balancer-controller[0].arn] : []
-  number_of_role_policy_arns    = 1
-  oidc_fully_qualified_subjects = ["system:serviceaccount:${local.aws-load-balancer-controller["namespace"]}:${local.aws-load-balancer-controller["service_account_name"]}"]
-  tags                          = local.tags
-}
+
+# module "iam_assumable_role_aws-load-balancer-controller" {
+#   source                        = "terraform-aws-modules/iam/aws//modules/iam-assumable-role-with-oidc"
+#   version                       = "~> 3.0"
+#   create_role                   = local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["create_iam_resources_irsa"]
+#   role_name                     = "tf-${var.cluster-name}-${local.aws-load-balancer-controller["name"]}-irsa"
+#   provider_url                  = replace(var.eks["cluster_oidc_issuer_url"], "https://", "")
+#   role_policy_arns              = local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["create_iam_resources_irsa"] ? [aws_iam_policy.aws-load-balancer-controller[0].arn] : []
+#   number_of_role_policy_arns    = 1
+#   oidc_fully_qualified_subjects = ["system:serviceaccount:${local.aws-load-balancer-controller["namespace"]}:${local.aws-load-balancer-controller["service_account_name"]}"]
+#   tags                          = local.tags
+# }
 
 resource "aws_iam_policy" "aws-load-balancer-controller" {
   count  = local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["create_iam_resources_irsa"] ? 1 : 0
   name   = "tf-${var.cluster-name}-${local.aws-load-balancer-controller["name"]}"
   policy = local.aws-load-balancer-controller["iam_policy_override"] == null ? file("${path.module}/iam/aws-load-balancer-controller.json") : local.aws-load-balancer-controller["iam_policy_override"]
+}
+
+# attach policy
+resource "aws_iam_role_policy_attachment" "aws-load-balancer-controller" {
+  count      = local.aws-load-balancer-controller["enabled"] ? 1 : 0
+  role       = var.worker_iam_role_name
+  policy_arn = aws_iam_policy.aws-load-balancer-controller.0.arn
 }
 
 resource "kubernetes_namespace" "aws-load-balancer-controller" {
@@ -85,45 +97,48 @@ resource "helm_release" "aws-load-balancer-controller" {
     local.aws-load-balancer-controller["extra_values"]
   ]
   namespace = kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]
+  depends_on = [
+    helm_release.cert-manager
+  ]
 }
 
-resource "kubernetes_network_policy" "aws-load-balancer-controller_default_deny" {
-  count = local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["default_network_policy"] ? 1 : 0
+# resource "kubernetes_network_policy" "aws-load-balancer-controller_default_deny" {
+#   count = local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["default_network_policy"] ? 1 : 0
 
-  metadata {
-    name      = "${kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]}-default-deny"
-    namespace = kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]
-  }
+#   metadata {
+#     name      = "${kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]}-default-deny"
+#     namespace = kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]
+#   }
 
-  spec {
-    pod_selector {
-    }
-    policy_types = ["Ingress"]
-  }
-}
+#   spec {
+#     pod_selector {
+#     }
+#     policy_types = ["Ingress"]
+#   }
+# }
 
-resource "kubernetes_network_policy" "aws-load-balancer-controller_allow_namespace" {
-  count = local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["default_network_policy"] ? 1 : 0
+# resource "kubernetes_network_policy" "aws-load-balancer-controller_allow_namespace" {
+#   count = local.aws-load-balancer-controller["enabled"] && local.aws-load-balancer-controller["default_network_policy"] ? 1 : 0
 
-  metadata {
-    name      = "${kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]}-allow-namespace"
-    namespace = kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]
-  }
+#   metadata {
+#     name      = "${kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]}-allow-namespace"
+#     namespace = kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]
+#   }
 
-  spec {
-    pod_selector {
-    }
+#   spec {
+#     pod_selector {
+#     }
 
-    ingress {
-      from {
-        namespace_selector {
-          match_labels = {
-            name = kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]
-          }
-        }
-      }
-    }
+#     ingress {
+#       from {
+#         namespace_selector {
+#           match_labels = {
+#             name = kubernetes_namespace.aws-load-balancer-controller.*.metadata.0.name[count.index]
+#           }
+#         }
+#       }
+#     }
 
-    policy_types = ["Ingress"]
-  }
-}
+#     policy_types = ["Ingress"]
+#   }
+# }

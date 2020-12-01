@@ -105,3 +105,10 @@ variable "sealed-secrets" {
   type        = any
   default     = {}
 }
+
+variable "worker_iam_role_name" {
+  description = "Work around for service permissions issues"
+  type      = string
+  #https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/1171
+  #https://github.com/kubernetes-sigs/aws-load-balancer-controller/issues/1668
+}

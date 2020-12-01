@@ -25,10 +25,6 @@ awsRegion: ${data.aws_region.current.name}
 rbac:
   create: true
   pspEnabled: true
-  serviceAccount:
-    name: ${local.cluster-autoscaler["service_account_name"]}
-    annotations:
-      eks.amazonaws.com/role-arn: "${local.cluster-autoscaler["enabled"] && local.cluster-autoscaler["create_iam_resources_irsa"] ? module.iam_assumable_role_cluster-autoscaler.this_iam_role_arn : ""}"
 image:
   repository: k8s.gcr.io/autoscaling/cluster-autoscaler
   tag: ${local.cluster-autoscaler["version"]}
@@ -38,21 +34,26 @@ serviceMonitor:
   enabled: ${local.kube-prometheus-stack["enabled"]}
 VALUES
 }
+# serviceAccount:
+#   name: ${local.cluster-autoscaler["service_account_name"]}
+#   annotations:
+#     eks.amazonaws.com/role-arn: "${local.cluster-autoscaler["enabled"] && local.cluster-autoscaler["create_iam_resources_irsa"] ? module.iam_assumable_role_cluster-autoscaler.this_iam_role_arn : ""}"
 
-module "iam_assumable_role_cluster-autoscaler" {
-  source                        = "terraform-aws-modules/iam/aws//modules/iam-assumable-role-with-oidc"
-  version                       = "~> 3.0"
-  create_role                   = local.cluster-autoscaler["enabled"] && local.cluster-autoscaler["create_iam_resources_irsa"]
-  role_name                     = "tf-${var.cluster-name}-${local.cluster-autoscaler["name"]}-irsa"
-  provider_url                  = replace(var.eks["cluster_oidc_issuer_url"], "https://", "")
-  role_policy_arns              = local.cluster-autoscaler["enabled"] && local.cluster-autoscaler["create_iam_resources_irsa"] ? [aws_iam_policy.cluster-autoscaler[0].arn] : []
-  number_of_role_policy_arns    = 1
-  oidc_fully_qualified_subjects = ["system:serviceaccount:${local.cluster-autoscaler["namespace"]}:${local.cluster-autoscaler["service_account_name"]}"]
-  tags                          = local.tags
-}
+
+# module "iam_assumable_role_cluster-autoscaler" {
+#   source                        = "terraform-aws-modules/iam/aws//modules/iam-assumable-role-with-oidc"
+#   version                       = "~> 3.0"
+#   create_role                   = local.cluster-autoscaler["enabled"] && local.cluster-autoscaler["create_iam_resources_irsa"]
+#   role_name                     = "tf-${var.cluster-name}-${local.cluster-autoscaler["name"]}-irsa"
+#   provider_url                  = replace(var.eks["cluster_oidc_issuer_url"], "https://", "")
+#   role_policy_arns              = local.cluster-autoscaler["enabled"] && local.cluster-autoscaler["create_iam_resources_irsa"] ? [aws_iam_policy.cluster-autoscaler[0].arn] : []
+#   number_of_role_policy_arns    = 1
+#   oidc_fully_qualified_subjects = ["system:serviceaccount:${local.cluster-autoscaler["namespace"]}:${local.cluster-autoscaler["service_account_name"]}"]
+#   tags                          = local.tags
+# }
 
 resource "aws_iam_policy" "cluster-autoscaler" {
-  count  = local.cluster-autoscaler["enabled"] && local.cluster-autoscaler["create_iam_resources_irsa"] ? 1 : 0
+  count  = local.cluster-autoscaler["enabled"] ? 1 : 0
   name   = "tf-${var.cluster-name}-${local.cluster-autoscaler["name"]}"
   policy = local.cluster-autoscaler["iam_policy_override"] == null ? data.aws_iam_policy_document.cluster-autoscaler.json : local.cluster-autoscaler["iam_policy_override"]
 }
@@ -97,6 +98,12 @@ data "aws_iam_policy_document" "cluster-autoscaler" {
       values   = ["true"]
     }
   }
+}
+
+resource "aws_iam_role_policy_attachment" "cluster-autoscaler" {
+  count      = local.cluster-autoscaler["enabled"] ? 1 : 0
+  role       = var.worker_iam_role_name
+  policy_arn = aws_iam_policy.cluster-autoscaler.0.arn
 }
 
 resource "kubernetes_namespace" "cluster-autoscaler" {

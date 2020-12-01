@@ -10,8 +10,8 @@ locals {
       service_account_name           = "cert-manager"
       create_iam_resources_irsa      = true
       enabled                        = false
-      chart_version                  = "v1.0.4"
-      version                        = "v1.0.4"
+      chart_version                  = "v1.1.0"
+      version                        = "v1.1.0"
       iam_policy_override            = null
       default_network_policy         = true
       acme_email                     = "contact@acme.com"
@@ -69,7 +69,7 @@ data "aws_iam_policy_document" "cert-manager" {
       "route53:GetChange"
     ]
 
-    resources = ["arn:aws:route53:::change/*"]
+    resources = ["arn:aws-us-gov:route53:::change/*"]
   }
 
   statement {
@@ -80,7 +80,7 @@ data "aws_iam_policy_document" "cert-manager" {
       "route53:ListResourceRecordSets"
     ]
 
-    resources = ["arn:aws:route53:::hostedzone/*"]
+    resources = ["arn:aws-us-gov:route53:::hostedzone/*"]
 
   }
 
@@ -139,13 +139,13 @@ resource "helm_release" "cert-manager" {
   ]
   namespace = kubernetes_namespace.cert-manager.*.metadata.0.name[count.index]
 
-  depends_on = [
-    helm_release.kube-prometheus-stack
-  ]
+  # depends_on = [
+  #   helm_release.kube-prometheus-stack
+  # ]
 }
 
 data "kubectl_path_documents" "cert-manager_cluster_issuers" {
-  pattern = "./templates/cert-manager-cluster-issuers.yaml"
+  pattern = "${path.module}/templates/cert-manager-cluster-issuers.yaml"
   vars = {
     acme_email = local.cert-manager["acme_email"]
     aws_region = data.aws_region.current.name
@@ -153,6 +153,7 @@ data "kubectl_path_documents" "cert-manager_cluster_issuers" {
 }
 
 resource "time_sleep" "cert-manager_sleep" {
+  count = local.cert-manager["enabled"] ? 1 : 0
   depends_on      = [helm_release.cert-manager]
   create_duration = "120s"
 }
@@ -209,7 +210,7 @@ resource "kubernetes_network_policy" "cert-manager_allow_namespace" {
 }
 
 resource "kubernetes_network_policy" "cert-manager_allow_monitoring" {
-  count = local.cert-manager["enabled"] && local.cert-manager["default_network_policy"] ? 1 : 0
+  count = local.cert-manager["enabled"] && local.kube-prometheus-stack["enabled"] && local.cert-manager["default_network_policy"] ? 1 : 0
 
   metadata {
     name      = "${kubernetes_namespace.cert-manager.*.metadata.0.name[count.index]}-allow-monitoring"
